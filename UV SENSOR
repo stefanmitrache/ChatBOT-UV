@@ -1,0 +1,112 @@
+#include <ESP8266WiFi.h>
+#include <WiFiClientSecure.h>
+#include <UniversalTelegramBot.h>
+#include <Wire.h>
+#include "Adafruit_VEML6070.h"
+
+// Wifi network station credentials
+#define WIFI_SSID "LANCOMBEIA"
+#define WIFI_PASSWORD "beialancom"
+
+// Telegram BOT Token (Get from Botfather)
+#define BOT_TOKEN "5445101778:AAHrphdPfwkc5jE9m07IH6BrJ-SZEo3HHJI"
+
+Adafruit_VEML6070 uv = Adafruit_VEML6070();
+const unsigned long BOT_MTBS = 1000; // mean time between scan messages
+
+unsigned long bot_lasttime; // last time messages' scan has been done
+X509List cert(TELEGRAM_CERTIFICATE_ROOT);
+WiFiClientSecure secured_client;
+UniversalTelegramBot bot(BOT_TOKEN, secured_client);
+
+void bot_setup()
+{
+  const String commands = F("["
+                            "{\"command\":\"help\",  \"description\":\"Get bot usage help\"},"
+                            "{\"command\":\"start\", \"description\":\"Message sent when you open a chat with a bot\"},"
+                             "{\"command\":\"UV\", \"description\":\"Message sent when you want to see thr UV light level\"},"
+                            "{\"command\":\"status\",\"description\":\"Answer device current status\"}" // no comma on last command
+                            "]");
+  bot.setMyCommands(commands);
+  //bot.sendMessage("25235518", "Hola amigo!", "Markdown");
+}
+
+void setup()
+{
+  Serial.begin(115200);
+  Serial.println();
+
+  // attempt to connect to Wifi network:
+  configTime(0, 0, "pool.ntp.org");      // get UTC time via NTP
+  secured_client.setTrustAnchors(&cert); // Add root certificate for api.telegram.org
+  Serial.print("Connecting to Wifi SSID ");
+  Serial.print(WIFI_SSID);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    Serial.print(".");
+    delay(500);
+  }
+  Serial.print("\nWiFi connected. IP address: ");
+  Serial.println(WiFi.localIP());
+
+  // Check NTP/Time, usually it is instantaneous and you can delete the code below.
+  Serial.print("Retrieving time: ");
+  time_t now = time(nullptr);
+  while (now < 24 * 3600)
+  {
+    Serial.print(".");
+    delay(100);
+    now = time(nullptr);
+  }
+  Serial.println(now);
+ uv.begin(VEML6070_1_T);  // pass in the integration time constant
+  bot_setup();
+}
+
+void loop()
+{   
+  float UV = uv.readUV();
+
+  // Check if any reads failed and exit early (to try again).
+  if (isnan(UV)) {
+    Serial.println(F("Failed to read from UV sensor!"));
+    return;
+  }
+
+  Serial.print(F("UV: "));
+  Serial.print(UV);
+  Serial.println("LUX");
+  
+  if (millis() - bot_lasttime > BOT_MTBS)
+  {
+    int numNewMessages = bot.getUpdates(bot.last_message_received + 1);
+
+    while (numNewMessages)
+    {
+      Serial.println("got response");
+      Serial.print("handleNewMessages ");
+  Serial.println(numNewMessages);
+  
+  String answer;
+  for (int i = 0; i < numNewMessages; i++)
+  {
+    telegramMessage &msg = bot.messages[i];
+    Serial.println("Received " + msg.text);
+    if (msg.text == "/help")
+      answer = "So you need help, uh? me too! use /start or /status";
+    else if (msg.text == "/start")
+      {answer = "Welcome my new friend* " + msg.from_name + "*"+"\n If you need UV taste: /UV ";}
+    else if (msg.text == "/UV")
+      answer = "UV: " + String(UV) + " LUX";
+    else
+      answer = "Say what?";
+
+    bot.sendMessage(msg.chat_id, answer, "Markdown");
+  }
+      numNewMessages = bot.getUpdates(bot.last_message_received + 1);
+    }
+
+    bot_lasttime = millis();
+  }
+}
